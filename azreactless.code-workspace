@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "serverless\\fnapp_socketbe",
+			"name": "fnapp_socketbe"
+		}
+	],
+	"settings": {}
+}

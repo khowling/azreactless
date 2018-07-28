@@ -1,0 +1,14 @@
+{
+  "name": "fnspp_socketbe",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "",
+    "build": "",
+    "test": "",
+    "eject": ""
+  },
+  "dependencies": {
+    "azure-arm-containerinstance": "*"
+  }
+}

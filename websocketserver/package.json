@@ -1,0 +1,13 @@
+{
+  "name": "msapp",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "express-useragent": "^1.0.12",
+    "ioredis": "^3.2.2",
+    "ws": "^5.1.1"
+  },
+  "scripts": {
+    "start": "node web.js"
+  }
+}

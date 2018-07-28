@@ -1,0 +1,99 @@
+
+# exit on error
+set -e
+
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <appname>"
+    exit 1
+fi
+
+APP=$1
+GROUP=${APP}-group
+BUILD=build01
+
+LOC="uksouth"
+
+STORAGE_ACC=${APP}store
+REDIS_NAME=${APP}-cache
+export STORAGE_ACC GROUP REDIS_NAME
+
+echo "Set location to ${LOC}..."
+az configure --defaults location=$LOC
+
+echo "Create group ${GROUP}..."
+az  group create -n $GROUP >/dev/null
+
+
+##------------------------------ UPLOAD SPA
+echo "Create Storage Account ${STORAGE_ACC}..."
+az storage account create -g $GROUP -n $STORAGE_ACC --kind StorageV2 --sku  Standard_LRS --https-only true >/dev/null
+
+echo "Get auth key for ${STORAGE_ACC} group ${GROUP}..."
+K1=$(az storage account keys list -n $STORAGE_ACC -g $GROUP --query "[0].value")
+
+echo "Create container & set to annonoumous..."
+az storage container create -n $BUILD --account-name $STORAGE_ACC  --account-key $K1 >/dev/null
+az storage container set-permission -n $BUILD --public-access blob --account-name $STORAGE_ACC  --account-key $K1 >/dev/null
+
+echo "Running npm build..."
+npm run build
+
+echo "Uload assets to container..."
+az storage blob upload-batch -d $BUILD  -s ./build  --account-name $STORAGE_ACC  --account-key $K1 >/dev/null
+
+
+##------------------------------ MANAGED REDIS
+echo "Create Redis"
+az redis create -g $GROUP -n ${REDIS_NAME} --sku Standard --vm-size C0
+
+echo "Waiting for provision"
+while [ "$(az redis show -n ${REDIS_NAME} -g $GROUP --query provisioningState --o tsv)" = "Creating" ]; do
+    printf "."
+    sleep 4
+done
+
+echo "Update Redis config: notify keyspace events..."
+az redis update -g mysapp-group -n mysapp-cache --set "redisConfiguration.notify-keyspace-events"="Khxg"
+
+
+##------------------------------ BUILD BACKEND CONTAINER
+
+export ACRNAME=khdraftacr
+
+docker build -t  khdraftacr.azurecr.io/myapp:latest .
+az acr login -n khdraftacr
+docker push khdraftacr.azurecr.io/myapp:latest
+
+az container create -g mysapp-group --name mysapp-web-1 -l northeurope \
+    --image khdraftacr.azurecr.io/myapp:latest --os-type Linux \
+    --ip-address Public \
+    --dns-name-label mysapp-web-1 \
+    --ports 8080 \
+    --environment-variables REDIS_URL=redis://:8vYIrtYQPt%2F3ZWZUFgG2eRcOXvHQxZGUvPP%2BhTJYfy0%3D@mysapp-cache.redis.cache.windows.net:6380/4  \
+    --registry-login-server khdraftacr.azurecr.io \
+    --registry-username khdraftacr \
+    --registry-password $(az acr credential show -n khdraftacr --query "passwords[0].value" --o tsv)
+
+
+az container create -g mysapp-group --name mysapp-worker-1 -l northeurope \
+    --image khdraftacr.azurecr.io/myapp:latest --os-type Linux \
+    --command-line "node worker.js" \
+    --environment-variables REDIS_URL=redis://:8vYIrtYQPt%2F3ZWZUFgG2eRcOXvHQxZGUvPP%2BhTJYfy0%3D@mysapp-cache.redis.cache.windows.net:6380/4  \
+    --registry-login-server khdraftacr.azurecr.io \
+    --registry-username khdraftacr \
+    --registry-password $(az acr credential show -n khdraftacr --query "passwords[0].value" --o tsv)
+
+## logs
+ az container logs -g mysapp-group --name mysapp-web-1 --follow
+
+
+
+# create webapp plan
+## az functionapp create -g $GROUP  --consumption-plan-location $LOC --name $APP --storage-account  $STORAGE_ACC
+
+# enabled MSI, and assign a reader role to the current resource group.
+current_subscription=$(az account show --query "id" --o tsv)
+az webapp identity assign -g $GROUP -n $APP --role reader --scope /subscriptions/${current_subscription}/${GROUP}
+
+#  URL ENCODE the Password!!!!
+export REDIS_URL=redis://:8vYIrtYQPt%2F3ZWZUFgG2eRcOXvHQxZGUvPP%2BhTJYfy0%3D@mysapp-cache.redis.cache.windows.net:6380/4
