@@ -7,14 +7,14 @@
       "direction": "in",
       "name": "req",
       "methods": [
-        "get",
-        "post"
-      ]
+        "post",
+      ],
+      "route": "create"
     },
     {
       "type": "http",
       "direction": "out",
-      "name": "res"
+      "name": "$return"
     }
   ]
 }

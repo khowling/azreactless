@@ -1,0 +1,159 @@
+
+# exit on error
+set -e
+
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <appname>"
+    exit 1
+fi
+
+export APP=$1
+GROUP=kh-int-azreactless-${APP}
+BUILD=build01
+
+LOC="westeurope"
+
+##------------------------------ Sort out the name restrictions and uniqueness to prevent issues with the script!
+
+# App Service name : 2-60, Alphanumeric or -, (but not begining or ending with -)
+if [[ ! "$APP" =~ ^([[:alnum:]]|-)*$ ]] || [[ "$APP" =~ ^-|-$ ]] || [ ${#APP} -gt 60 ] || [ ${#APP} -lt 2 ] ; then
+    echo 'Application name can only container alpha numeric charactors or "-" (but not begining or ending with "-"), and be between 2-60 long'
+    exit 1
+fi
+
+# Storage name : 3-24, Lowercase, Alphanumeric
+LOWER_ALNUM=$(echo "${APP,,}$((RANDOM%9000+1000))" | tr -cd '[[:alnum:]]' )
+export STORAGE_ACC=${LOWER_ALNUM::24}
+
+# CosmosDB name : 3-31, Lowercase, Alphanumeric or -
+LOWER_ALNUM_DASH=$(echo "${APP,,}$((RANDOM%9000+1000))" | tr -cd '[[:alnum:]]-' )
+export COSMOSDB_ACC=${LOWER_ALNUM_DASH::31}
+
+
+REDIS_NAME=${APP}-cache
+export STORAGE_ACC GROUP REDIS_NAME
+
+echo "Set default location to [${LOC}]..."
+az configure --defaults location=$LOC
+
+echo "Create group [${GROUP}] and set as default..."
+az  group create -n $GROUP >/dev/null
+az configure --defaults group=$GROUP
+
+echo "Checking name is free [${COSMOSDB_ACC}]...."
+# https://docs.microsoft.com/en-us/azure/architecture/best-practices/naming-conventions
+if [[ $(az cosmosdb check-name-exists -n COSMOSDB_ACC) = true ]]; then 
+    echo "CosmosDB name taken [${COSMOSDB_ACC}]";
+    exit 1;
+fi
+
+##------------------------------ Create CosmosDB collection
+echo "Create NoSQL Database [${COSMOSDB_ACC}]..."
+az cosmosdb create  -n $COSMOSDB_ACC  >/dev/null
+az cosmosdb database create  -n $COSMOSDB_ACC --db-name db >/dev/null
+az cosmosdb collection create   -n $COSMOSDB_ACC --db-name db --collection-name items  --throughput 400 >/dev/null
+COSMOS_KEY=$(az cosmosdb list-keys -n $COSMOSDB_ACC --output tsv --query "primaryMasterKey")
+
+##------------------------------ Create Storage Account
+echo "Create Storage Account [${STORAGE_ACC}]..."
+az storage account create  -n $STORAGE_ACC --kind StorageV2 --sku  Standard_LRS --https-only true >/dev/null
+
+
+##------------------------------ Create FunctionApp
+## https://docs.microsoft.com/en-us/cli/azure/functionapp?view=azure-cli-latest
+echo "Create function app [${APP}]..."
+az functionapp create  -n $APP -s $STORAGE_ACC --consumption-plan-location $LOC
+## Enable "Run From Package", a runtime feature that allows 'mounting' a zip file and running directly from it.   your App runs directly over the 'mounted' zip file, which completely takes over your wwwroot folder (which becomes read-only).
+## Instead of expanding your zip into wwwroot as it normally would, zipdeploy notices that Run From Package is enabled, and instead just takes the zip and saves in d:\home\data\SitePackages, along with the matching packagename.txt file.
+## SPEEDS UP COLD STARTS!!  https://github.com/Azure/app-service-announcements-discussions/issues/48
+az functionapp config appsettings set  -n $APP --settings \
+    FUNCTIONS_EXTENSION_VERSION=beta \
+    WEBSITE_NODE_DEFAULT_VERSION=8.11.1 \
+    WEBSITE_RUN_FROM_ZIP=1 \
+    MyAccount_COSMOSDB="AccountEndpoint=https://${COSMOSDB_ACC}.documents.azure.com:443/;AccountKey=${COSMOS_KEY};"
+
+## Perform deployment using the kudu zip push deployment for a function app
+export FN_APP=./serverless/fnapp_socketbe
+( cd $FN_APP && zip -r out.zip *; )
+
+az functionapp deployment source config-zip  -n $APP --src $FN_APP/out.zip
+
+##------------------------------ UPLOAD SPA
+echo "Get auth key for ${STORAGE_ACC} group ${GROUP}..."
+K1=$(az storage account keys list -n $STORAGE_ACC --output tsv --query "[0].value")
+
+echo "Enable 'Static Website' Setting to create the $web container (requires storage-preview extension)....."
+az storage blob service-properties update --account-name $STORAGE_ACC --static-website --404-document 404.html --index-document index.html
+
+
+##echo "Create container & set to annonoumous..."
+##az storage container create -n $BUILD --account-name $STORAGE_ACC  --account-key $K1 >/dev/null
+##az storage container set-permission -n $BUILD --public-access blob --account-name $STORAGE_ACC  --account-key $K1 >/dev/null
+
+
+echo "Running npm build..."
+export SPA_APP=./spa
+( cd $SPA_APP && npm run build)
+
+echo "Upload assets to container..."
+az storage blob upload-batch -d '$web'  -s $SPA_APP/build  --account-name $STORAGE_ACC  --account-key $K1 >/dev/null
+
+: '
+
+##------------------------------ MANAGED REDIS
+echo "Create Redis"
+az redis create  -n ${REDIS_NAME} --sku Standard --vm-size C0
+
+echo "Waiting for provision"
+while [ "$(az redis show -n ${REDIS_NAME}  --query provisioningState --o tsv)" = "Creating" ]; do
+    printf "."
+    sleep 4
+done
+
+echo "Update Redis config: notify keyspace events..."
+az redis update -g mysapp-group -n mysapp-cache --set "redisConfiguration.notify-keyspace-events"="Khxg"
+
+
+##------------------------------ BUILD BACKEND CONTAINER
+
+export ACRNAME=khdraftacr
+
+docker build -t  khdraftacr.azurecr.io/myapp:latest .
+az acr login -n khdraftacr
+docker push khdraftacr.azurecr.io/myapp:latest
+
+az container create -g mysapp-group --name mysapp-web-1 -l northeurope \
+    --image khdraftacr.azurecr.io/myapp:latest --os-type Linux \
+    --ip-address Public \
+    --dns-name-label mysapp-web-1 \
+    --ports 8080 \
+    --environment-variables REDIS_URL=redis://:8vYIrtYQPt%2F3ZWZUFgG2eRcOXvHQxZGUvPP%2BhTJYfy0%3D@mysapp-cache.redis.cache.windows.net:6380/4  \
+    --registry-login-server khdraftacr.azurecr.io \
+    --registry-username khdraftacr \
+    --registry-password $(az acr credential show -n khdraftacr --query "passwords[0].value" --o tsv)
+
+
+az container create -g mysapp-group --name mysapp-worker-1 -l northeurope \
+    --image khdraftacr.azurecr.io/myapp:latest --os-type Linux \
+    --command-line "node worker.js" \
+    --environment-variables REDIS_URL=redis://:8vYIrtYQPt%2F3ZWZUFgG2eRcOXvHQxZGUvPP%2BhTJYfy0%3D@mysapp-cache.redis.cache.windows.net:6380/4  \
+    --registry-login-server khdraftacr.azurecr.io \
+    --registry-username khdraftacr \
+    --registry-password $(az acr credential show -n khdraftacr --query "passwords[0].value" --o tsv)
+
+## logs
+ az container logs -g mysapp-group --name mysapp-web-1 --follow
+
+
+
+# create webapp plan
+## az functionapp create   --consumption-plan-location $LOC --name $APP --storage-account  $STORAGE_ACC
+
+# enabled MSI, and assign a reader role to the current resource group.
+current_subscription=$(az account show --query "id" --o tsv)
+az webapp identity assign  -n $APP --role reader --scope /subscriptions/${current_subscription}/${GROUP}
+
+#  URL ENCODE the Password!!!!
+export REDIS_URL=redis://:8vYIrtYQPt%2F3ZWZUFgG2eRcOXvHQxZGUvPP%2BhTJYfy0%3D@mysapp-cache.redis.cache.windows.net:6380/4
+
+'

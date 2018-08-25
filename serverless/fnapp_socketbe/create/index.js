@@ -88,6 +88,9 @@ module.exports = function (context, req) {
         rg = "kh-int-demo-nodeless",
         aci_group = "backend_app"
 
+    context.log ( JSON.stringify(req))
+
+
     msi_utils.get_access_token("https://management.azure.com").then(access_token => {
         context.log ("calling createACI")
         createACI(access_token, sid, rg, aci_group).then (succ => {
@@ -101,4 +104,5 @@ module.exports = function (context, req) {
         context.log (err)
         context.done(JSON.stringify(err));
     })
+
 };

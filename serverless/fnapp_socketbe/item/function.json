@@ -1,0 +1,39 @@
+{
+  "disabled": false,
+  "bindings": [
+    {
+      "authLevel": "function",
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "req",
+      "methods": [
+        "get",
+        "delete"
+      ],
+      "route": "item/{id}"
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "$return"
+    },
+    {
+      "name": "inputDocument",
+      "type": "CosmosDB",
+      "direction": "in",
+      "id" : "{id}",
+      "databaseName": "ToDoList",
+      "collectionName": "Items",
+      "connectionStringSetting": "MyAccount_COSMOSDB"
+    },
+    {
+      "name": "outputDocument",
+      "type": "CosmosDB",
+      "direction": "out",
+      "createIfNotExists": true,
+      "databaseName": "ToDoList",
+      "collectionName": "Items",
+      "connectionStringSetting": "MyAccount_COSMOSDB"
+    }
+  ]
+}
