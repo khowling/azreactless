@@ -57,7 +57,7 @@ class CRUD extends Component {
         }
       }
 
-      fetch(url, opts).then((r) => {
+      fetch((process.env.REACT_APP_FN_HOST || '') + url, opts).then((r) => {
         console.log (`fetch status ${r.status}`)
         if (!r.ok) {
           console.log (`non 200 err : ${r.status}`)
