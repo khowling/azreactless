@@ -1,6 +1,7 @@
 import React, { Component } from 'react';
 import TableList from './tablelist.js'
-import update from 'immutability-helper';
+import update from 'immutability-helper'
+import { AppInsights } from 'applicationinsights-js';
 
 // Imports components from Fluent Web https://fluentweb.com/building-blocks 
 //import { Header, ContentPlacement, TypographicIntro, Footer, Hyperlink, Table } from '@ms-fw/fw-react/components';
@@ -112,6 +113,7 @@ export default class BattleRoyal extends Component {
       }, err => this.setState({dowork_last: err}))
   }
   componentDidMount() {
+    AppInsights.trackPageView("battleroyal", "/battleroyal")
     //this._toggleListen()
   }
   componentDidUpdate() {

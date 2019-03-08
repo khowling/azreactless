@@ -1,5 +1,5 @@
 import React, { Component } from 'react';
-
+import { AppInsights } from 'applicationinsights-js'; 
 
 class CRUD extends Component {
 
@@ -10,11 +10,13 @@ class CRUD extends Component {
   }
   
   componentDidMount() {
+    AppInsights.trackPageView("crud", "/crud")
     this.get()
   }
 
   add() {
-    this._fetchit('POST','/api/items', JSON.stringify({name: this.input.current.value})).then(succ => {
+    AppInsights.trackEvent("Add Item", { text: this.input.current.value }, { line_count: 1 });
+    this._fetchit('POST','/api/orders', JSON.stringify({name: this.input.current.value})).then(succ => {
       console.log (`created success : ${JSON.stringify(succ)}`)
       this.input.current.value = ""
       this.get()
@@ -24,7 +26,7 @@ class CRUD extends Component {
   }
 
   get() {
-    this._fetchit('GET','/api/items').then(succ => {
+    this._fetchit('GET','/api/orders').then(succ => {
       console.log (`got list success : ${JSON.stringify(succ)}`)
       this.setState({ error: null, people: succ});
     }, err => {
@@ -34,7 +36,7 @@ class CRUD extends Component {
 
   del(p) {
     console.log (`del ${p}`)
-    this._fetchit('DELETE',`/api/item/${p}`).then(succ => {
+    this._fetchit('DELETE',`/api/order/${p}`).then(succ => {
       console.log (`delete success : ${JSON.stringify(succ)}`)
       this.get()
     }, err => {
@@ -57,13 +59,13 @@ class CRUD extends Component {
         }
       }
 
-      fetch((process.env.REACT_APP_FN_HOST || '') + url, opts).then((r) => {
+      fetch((process.env.REACT_APP_FN_HOST || '') + url + (process.env.REACT_APP_FN_KEY || ''), opts).then((r) => {
         console.log (`fetch status ${r.status}`)
         if (!r.ok) {
           console.log (`non 200 err : ${r.status}`)
           return reject(r.status)
         } else {
-          if ((r.status === 204 && type === 'DELETE') || (r.status === 201 && type === 'POST')) {
+          if ((r.status === 200 && type === 'DELETE') || (r.status === 201 && type === 'POST')) {
             return resolve();
           } else {
             r.json().then(rjson => {
@@ -85,6 +87,7 @@ class CRUD extends Component {
 
 
   render() {
+    
     return (
       <div className="container">
         <div className="row">
@@ -104,12 +107,7 @@ class CRUD extends Component {
 
               <div className="panel-heading">
                 People List
-                <ul className="pull-right panel-settings panel-button-tab-right">
-                  <li className="dropdown">
-                    <em className="fa fa-cogs"></em>
-                  </li>
-                </ul>
-                <span className="pull-right clickable panel-toggle panel-button-tab-left"><em className="fa fa-toggle-up"></em></span>
+                
               </div>
               
               <div className="panel-body">
@@ -119,7 +117,7 @@ class CRUD extends Component {
 
                     <li key={i} className="todo-list-item">
                     <div className="checkbox">
-                      <input type="checkbox"/>
+                      
                       <label >{p.name}</label>
                     </div>
                     <div className="pull-right action-buttons"><a onClick={this.del.bind(this,p.id)}  className="trash">

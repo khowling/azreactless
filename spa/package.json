@@ -9,13 +9,13 @@
     "eject": "react-scripts eject"
   },
   "dependencies": {
-    "react": "^16.3.2",
-    "react-dom": "^16.3.2",
+    "react": "^16.5.2",
+    "react-dom": "^16.5.2",
     "react-scripts": "1.1.4"
   },
   "devDependencies": {
-    "applicationinsights-js": "^1.0.18",
-    "immutability-helper": "^2.6.6",
+    "applicationinsights-js": "^1.0.20",
+    "immutability-helper": "^2.8.1",
     "react-router-dom": "^4.3.1"
   },
   "proxy": {

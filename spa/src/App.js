@@ -5,15 +5,7 @@ import CRUD from './components/crud.js'
 import BattleRoyal from './components/battleroyal.js'
 import Landing from './components/landing.js'
 
-
-import { AppInsights } from 'applicationinsights-js'; 
-
 const App = () => {
-
-    if (!AppInsights.config) { 
-        AppInsights.downloadAndSetup({instrumentationKey: process.env.REACT_APP_AI_KEY});
-    } 
-    
     return (
         <div>
             <Link to="/battleroyal">battleroyal</Link>

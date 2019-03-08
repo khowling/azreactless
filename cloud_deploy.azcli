@@ -2,10 +2,27 @@
 # exit on error
 set -e
 
+while getopts "d:" opt; do
+  case ${opt} in
+    d ) 
+      just_deploy=yes
+      LOWER_ALNUM_DASH=$OPTARG
+      ;;
+    \? )
+      echo "Unknown arg"
+      echo "Usage: $0 [-d cosmos_name (use existing db)] <website_name>"
+      ;; 
+    esac
+done
+
+shift $((OPTIND -1))
+
 if [ $# -ne 1 ]; then
-    echo "Usage: $0 <appname>"
+    echo "Usage: $0 [-d cosmos_name (use existing db)] <website_name> $#"
     exit 1
 fi
+
+
 
 export APP=$1
 GROUP=kh-int-azreactless-${APP}
@@ -22,7 +39,7 @@ if [[ ! "$APP" =~ ^([[:alnum:]]|-)*$ ]] || [[ "$APP" =~ ^-|-$ ]] || [ ${#APP} -g
 fi
 
 # CosmosDB name : 3-31, Lowercase, Alphanumeric or -
-LOWER_ALNUM_DASH=$(echo "${APP,,}$((RANDOM%9000+1000))" | tr -cd '[[:alnum:]]-' )
+LOWER_ALNUM_DASH=${LOWER_ALNUM_DASH:-$(echo "${APP,,}$((RANDOM%9000+1000))" | tr -cd '[[:alnum:]]-' )}
 export COSMOSDB_ACC=${LOWER_ALNUM_DASH::31}
 # Storage name : 3-24, Lowercase, Alphanumeric
 LOWER_ALNUM=$(echo "${LOWER_ALNUM_DASH}" | tr -cd '[[:alnum:]]' )
@@ -34,9 +51,6 @@ export STORAGE_ACC GROUP REDIS_NAME
 echo "Set default location to [${LOC}]..."
 az configure --defaults location=$LOC
 
-echo "Create group [${GROUP}] and set as default..."
-az  group create -n $GROUP >/dev/null
-az configure --defaults group=$GROUP
 
 # echo "Checking name is free [${COSMOSDB_ACC}]...."
 # https://docs.microsoft.com/en-us/azure/architecture/best-practices/naming-conventions
@@ -45,37 +59,66 @@ az configure --defaults group=$GROUP
 #     exit 1;
 # fi
 
-##------------------------------ Create CosmosDB collection
-echo "Create NoSQL Database [${COSMOSDB_ACC}]..."
-az cosmosdb create  -n $COSMOSDB_ACC  >/dev/null
-az cosmosdb database create -g $GROUP -n $COSMOSDB_ACC --db-name ToDoList >/dev/null
-az cosmosdb collection create  -g $GROUP -n $COSMOSDB_ACC --db-name ToDoList --collection-name Items  --throughput 400 >/dev/null
-COSMOS_KEY=$(az cosmosdb list-keys -g $GROUP -n $COSMOSDB_ACC --output tsv --query "primaryMasterKey")
+if [ ! "$just_deploy" ]; then
+    echo "Create group [${GROUP}] and set as default..."
+    az  group create -n $GROUP >/dev/null
 
-##------------------------------ Create Storage Account
-echo "Create Storage Account [${STORAGE_ACC}]..."
-az storage account create  -n $STORAGE_ACC --kind StorageV2 --sku  Standard_LRS --https-only true >/dev/null
+    ##------------------------------ Create CosmosDB collection
+    echo "Create NoSQL Database [${COSMOSDB_ACC}]..."
+    az cosmosdb create  -n $COSMOSDB_ACC  >/dev/null
+    az cosmosdb database create -g $GROUP -n $COSMOSDB_ACC --db-name ToDoList >/dev/null
+    az cosmosdb collection create  -g $GROUP -n $COSMOSDB_ACC --db-name ToDoList --collection-name Items  --throughput 400 >/dev/null
+    COSMOS_KEY=$(az cosmosdb list-keys -g $GROUP -n $COSMOSDB_ACC --output tsv --query "primaryMasterKey")
 
+    ##------------------------------ Create Storage Account
+    echo "Create Storage Account [${STORAGE_ACC}]..."
+    az storage account create  -n $STORAGE_ACC --kind StorageV2 --sku  Standard_LRS --https-only true >/dev/null
+else
+    echo "Using exising CosmosDB account [${COSMOSDB_ACC}] and Storage Account [${STORAGE_ACC}]"
+    COSMOS_KEY=$(az cosmosdb list-keys -g $GROUP -n $COSMOSDB_ACC --output tsv --query "primaryMasterKey")
+fi
 
-##------------------------------ Create FunctionApp
-## https://docs.microsoft.com/en-us/cli/azure/functionapp?view=azure-cli-latest
-echo "Create function app [${APP}]..."
-export FN_HOST=$(az functionapp create  -n $APP -s $STORAGE_ACC --consumption-plan-location $LOC --output tsv --query "defaultHostName")
-## Enable "Run From Package", a runtime feature that allows 'mounting' a zip file and running directly from it.   your App runs directly over the 'mounted' zip file, which completely takes over your wwwroot folder (which becomes read-only).
-## Instead of expanding your zip into wwwroot as it normally would, zipdeploy notices that Run From Package is enabled, and instead just takes the zip and saves in d:\home\data\SitePackages, along with the matching packagename.txt file.
-## SPEEDS UP COLD STARTS!!  https://github.com/Azure/app-service-announcements-discussions/issues/48
-az functionapp config appsettings set  -n $APP --settings \
-    FUNCTIONS_EXTENSION_VERSION=beta \
-    WEBSITE_NODE_DEFAULT_VERSION=8.11.1 \
-    WEBSITE_RUN_FROM_ZIP=1 \
-    MyAccount_COSMOSDB="AccountEndpoint=https://${COSMOSDB_ACC}.documents.azure.com:443/;AccountKey=${COSMOS_KEY};"
+az configure --defaults group=$GROUP
 
-## NEED TO ADD CORS support
-# https://github.com/Azure/azure-cli/issues/6884
-# az webapp cors add -n $APP --allowed-origins "https://${STORAGE_ACC}.z6.web.core.windows.net"
+get_fn_hostkey() {
+    fnname=$1
+    fnhost=$2
+    username=$(az webapp deployment list-publishing-profiles -n $fnname  --query "[?publishMethod=='MSDeploy'].userName" --output tsv)
+    passwd=$(az webapp deployment list-publishing-profiles -n $fnname --query "[?publishMethod=='MSDeploy'].userPWD" --output tsv)
+    BEARER_TOKEN=$(curl -u ${username}:${passwd} -sb -X GET https://${fnname}.scm.azurewebsites.net/api/functions/admin/token | sed 's/.\(.*\)/\1/' | sed 's/\(.*\)./\1/')
+    export FN_KEY=$(curl -sb -X GET -H "Authorization: Bearer ${BEARER_TOKEN}" https://${fnhost}/admin/host/systemkeys/_master | grep -Po  '"'"value"'"\s*:\s*"\K([^"]*)')
+}
+
+if [ ! "$just_deploy" ]; then
+    ##------------------------------ Create FunctionApp
+    ## https://docs.microsoft.com/en-us/cli/azure/functionapp?view=azure-cli-latest
+    echo "Create function app [${APP}]..."
+    export FN_HOST=$(az functionapp create  -n $APP -s $STORAGE_ACC --consumption-plan-location $LOC --output tsv --query "defaultHostName")
+    echo "Getting master key..."
+    get_fn_hostkey $APP $FN_HOST
+    
+    ## Enable "Run From Package", a runtime feature that allows 'mounting' a zip file and running directly from it.   your App runs directly over the 'mounted' zip file, which completely takes over your wwwroot folder (which becomes read-only).
+    ## Instead of expanding your zip into wwwroot as it normally would, zipdeploy notices that Run From Package is enabled, and instead just takes the zip and saves in d:\home\data\SitePackages, along with the matching packagename.txt file.
+    ## SPEEDS UP COLD STARTS!!  https://github.com/Azure/app-service-announcements-discussions/issues/48
+    az functionapp config appsettings set  -n $APP --settings \
+        FUNCTIONS_EXTENSION_VERSION=beta \
+        WEBSITE_NODE_DEFAULT_VERSION=8.11.1 \
+        WEBSITE_RUN_FROM_ZIP=1 \
+        Cosmos_CRUD="AccountEndpoint=https://${COSMOSDB_ACC}.documents.azure.com:443/;AccountKey=${COSMOS_KEY};"
+
+    ## NEED TO ADD CORS support
+    # https://github.com/Azure/azure-cli/issues/6884
+    az webapp cors add -n $APP --allowed-origins "https://${STORAGE_ACC}.z6.web.core.windows.net"
+else
+    echo "Getting url and key of existing function app [${APP}]"
+    export FN_HOST=$(az functionapp show -n $APP --output tsv --query "defaultHostName")
+
+    get_fn_hostkey $APP $FN_HOST
+fi
+
 
 ## Perform deployment using the kudu zip push deployment for a function app
-export FN_APP=./serverless/fnapp_socketbe
+export FN_APP=./azfuncapps/order-ops
 ( cd $FN_APP && zip -r out.zip *; )
 
 az functionapp deployment source config-zip  -n $APP --src $FN_APP/out.zip
@@ -97,6 +140,7 @@ echo "Running npm build [with FN_HOST=$FN_HOST}]..."
 export SPA_APP=./spa
 ( 
     export REACT_APP_FN_HOST="//${FN_HOST}"
+    export REACT_APP_FN_KEY="?code=${FN_KEY}"
     cd $SPA_APP && npm run build
 )
 

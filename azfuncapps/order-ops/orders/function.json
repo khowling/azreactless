@@ -1,0 +1,38 @@
+{
+  "disabled": false,
+  "bindings": [
+    {
+      "authLevel": "function",
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "req",
+      "methods": [
+        "get",
+        "post"
+      ]
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "res"
+    },
+    {
+      "name": "inputDocument",
+      "type": "CosmosDB",
+      "direction": "in",
+      "sqlQuery": "SELECT top 10 c.id, c.name FROM c where c.type = 'ORDER' and c.active = true",
+      "databaseName": "Azreactless",
+      "collectionName": "Azreactless",
+      "connectionStringSetting": "Cosmos_CRUD"
+    },
+    {
+      "name": "outputDocument",
+      "type": "CosmosDB",
+      "direction": "out",
+      "createIfNotExists": true,
+      "databaseName": "Azreactless",
+      "collectionName": "Azreactless",
+      "connectionStringSetting": "Cosmos_CRUD"
+    }
+  ]
+}
