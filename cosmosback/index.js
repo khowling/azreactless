@@ -13,10 +13,8 @@ const connectionPolicy = new cosmos.ConnectionPolicy ()
 connectionPolicy.DisableSSLVerification = true
 
 const client = new CosmosClient({ 
-  // endpoint:'https://kh-azless3572.documents.azure.com:443/', 
-  endpoint: 'https://localhost:8081', 
-  // auth: { masterKey : 'ofzWsBJWo2GutShzT1y9oU8CUXqG64O4sXDSRJngUwbPA4P0zGAFLFdOSudP0y43CxK1BeDpHAHzzN2O1nsEwA=='}
-  auth: { masterKey : 'C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==' },
+  endpoint: process.env.COSMOS_ENDPOINT, 
+  auth: { masterKey : process.env.COSMOS_KEY },
   connectionPolicy 
 })
 
