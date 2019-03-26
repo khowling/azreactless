@@ -2,11 +2,14 @@
 # exit on error
 set -e
 
-while getopts "d:" opt; do
+while getopts "gd:" opt; do
   case ${opt} in
     d ) 
       just_deploy=yes
       LOWER_ALNUM_DASH=$OPTARG
+      ;;
+    g ) 
+      GROUP=$OPTARG
       ;;
     \? )
       echo "Unknown arg"
@@ -25,12 +28,18 @@ fi
 
 
 export APP=$1
-GROUP=kh-int-azreactless-${APP}
+GROUP=${GROUP:-azreactless-${APP}}
 BUILD=build01
 
 LOC="westeurope"
 
 ##------------------------------ Sort out the name restrictions and uniqueness to prevent issues with the script!
+
+# App Service name : 2-60, Alphanumeric or -, (but not begining or ending with -)
+if [[ ! "$GROUP" =~ ^([[:alnum:]]|-)*$ ]] || [[ "$GROUP" =~ ^-|-$ ]] || [ ${#GROUP} -gt 60 ] || [ ${#GROUP} -lt 2 ] ; then
+    echo 'Application GROUP can only container alpha numeric charactors or "-" (but not begining or ending with "-"), and be between 2-60 long'
+    exit 1
+fi
 
 # App Service name : 2-60, Alphanumeric or -, (but not begining or ending with -)
 if [[ ! "$APP" =~ ^([[:alnum:]]|-)*$ ]] || [[ "$APP" =~ ^-|-$ ]] || [ ${#APP} -gt 60 ] || [ ${#APP} -lt 2 ] ; then
